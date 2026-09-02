@@ -4,18 +4,50 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/hareeshkar/opencode-subagent-delegate/blob/main/LICENSE)
 [![OpenCode 1.18.x](https://img.shields.io/badge/OpenCode-1.18.x-5C2D91)](https://opencode.ai/docs/plugins)
 
-Plug-and-play [OpenCode](https://opencode.ai) plugin for custom subagent model allocation — **V1 contract**: `delegate(model, task)` + `discover_models(query?)`.
+> **You've connected a fleet of providers. Your subagents still run on one model.**
+> This plugin makes the whole fleet callable — as inline, clickable subagents, one config line, zero model lists to maintain.
 
-Run any task on any model available to your OpenCode install, per call, without restarting OpenCode or hardcoding `model:` in every agent definition.
+[OpenCode](https://opencode.ai) connects you to **75+ LLM providers** — Anthropic, OpenAI, Google, DeepSeek, Moonshot, MiniMax, NVIDIA, GitHub Copilot, OpenRouter, local models via Ollama/LM Studio — plus [OpenCode Zen](https://opencode.ai/docs/zen) and Go, and any custom gateway you define in config. Every key you add with the `/connect` command, every custom provider in `opencode.json` — that's your fleet.
 
-## Why
+But the fleet is **static**. The `/models` picker drives one primary model; agent definitions hardcode theirs. Want a second opinion from a different provider mid-chat? Edit config. Restart. Repeat.
 
+**opencode-subagent-delegate turns the fleet into tools:**
+
+```
+discover_models("kimi")
+→ every Kimi variant across all your connected providers, in one call
+
+delegate(model="moonshotai/kimi-k2.7", task="review this diff", agent="plan", variant="high")
+→ runs INLINE in your current chat as a clickable subagent
+```
+
+## Why this plugin exists
+
+- **Your `/connect` fleet, autodiscovered** — the registry merges everything OpenCode already knows: providers authenticated via `/connect`, custom providers from `opencode.json` (internal gateways, Ollama, LM Studio, llama.cpp), Zen and Go, and the Models.dev catalog. Register nothing, list nothing. **Connect a provider → it's delegable.**
+- **Any model, any agent, any reasoning variant — per call.** Draft with a free Zen model, review with a frontier model, keep secrets on a local Ollama model — all in one conversation, all as subagents.
 - **True subagents, inline**: `delegate` spawns a child session **parented to your current chat** — the TUI renders it as a live Task pane under the tool call (clickable navigation, duration, tool count), not as a stray standalone session.
 - **On-demand discovery**: the LLM calls `discover_models("gemini")` and sees *only* the matching results (capped at 20), never the whole catalog. Your context stays lean.
-- **Explicit execution**: `delegate(model="google/gemini-2.5-flash", task="...")` — execution identity is always `(providerID, modelID)`. Short names matching 2+ models return an ambiguity list; the LLM retries with a qualified id. No guessing.
+- **Explicit execution**: execution identity is always `(providerID, modelID)`. Short names matching 2+ models return an ambiguity list; the LLM retries with a qualified id. No guessing.
 - **No pricing heuristics**: price never enters the resolver. If you want cost routing, state it explicitly via `preferredProviders`.
 - **Registry never becomes context**: the system prompt only says *tools exist and what they're for* — it never contains the model catalog.
 - **Clean failures**: provider 403s, model removals, and auth errors surface as readable error envelopes — the failed task stays clickable and keeps its model metadata for retry.
+
+## A session with the fleet
+
+```
+You: Draft the migration script, then get a strong model to review it.
+
+LLM: delegate(model="opencode/mimo-v2.5-free", task="draft migration script for ...")
+     → subagent runs inline, draft lands in your chat
+
+LLM: delegate(model="anthropic/claude-sonnet-4-5", task="review this migration script: ...",
+              agent="plan", variant="high")
+     → second subagent, frontier model, high reasoning — also inline
+
+You: click either Task pane to inspect the full child session.
+```
+
+One conversation, three providers, zero config edits, zero restarts.
 
 ## Install
 
@@ -142,16 +174,16 @@ All options are optional and passed as the second element of the plugin tuple:
 | `registryTtlMs` | `300000` | Registry cache TTL in milliseconds. |
 | `hintInSystemPrompt` | `true` | Inject a ~4-line hint that the delegation tools exist. No catalog is ever included. |
 
-## Model catalog sources
+## Autodiscovery internals
 
-The registry merges, in order of preference:
+No provider registration, no model lists. The registry mirrors OpenCode's own provider layer — the same one your `/connect` command and `provider` config feed:
 
-1. **SDK merged catalog** (`client.config.providers()` / `client.provider.list()`) — covers `opencode.json` + `auth.json` + Zen gateway.
-2. **Filesystem fallback** — reads `~/.config/opencode/opencode.json` (authoritative for custom providers) plus `~/.cache/opencode/models.json` filtered to providers present in `~/.local/share/opencode/auth.json`.
+1. **SDK merged catalog** (`client.config.providers()` / `client.provider.list()`) — covers everything OpenCode resolves: `/connect`-authenticated providers (`~/.local/share/opencode/auth.json`), Models.dev catalog entries, OpenCode Zen and Go.
+2. **Filesystem fallback** — reads `~/.config/opencode/opencode.json` `provider.models` (authoritative for custom gateways: internal endpoints, Ollama, LM Studio, llama.cpp) plus the provider cache filtered to `/connect`-authenticated providers.
 
-This means custom providers you define in config (e.g. an internal gateway) are discoverable alongside everything OpenCode knows natively.
+If a query returns zero results, the registry force-refreshes once — a provider you authenticated mid-session becomes discoverable without restarting. Unknown or renamed ids fall back to the server's own suggestion list, and the orchestrating model self-corrects via `discover_models` (tested and self-correcting).
 
-> **Note:** the filesystem merge can briefly surface ids the server no longer resolves (e.g. a model renamed upstream while the cache is stale). In that case `delegate` returns the server's own suggestion list, and the orchestrating model can re-resolve via `discover_models` — tested and self-correcting.
+Auth flows out; secrets never do: keys are read internally to *filter* the catalog to what you can actually use, and are never returned to the LLM.
 
 ## Verified
 
