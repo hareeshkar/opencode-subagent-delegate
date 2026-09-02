@@ -1,0 +1,46 @@
+{
+  "name": "opencode-subagent-delegate",
+  "version": "1.1.0",
+  "description": "Plug-and-play OpenCode plugin: delegate(model, task) + discover_models(query) — on-demand model discovery, explicit provider/model subagent execution, no pricing heuristics, registry never injected into context.",
+  "type": "module",
+  "main": "index.ts",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "files": [
+    "index.ts",
+    "registry.ts",
+    "resolver.ts",
+    "execution.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "opencode",
+    "plugin",
+    "subagent",
+    "delegate",
+    "delegation",
+    "model-router",
+    "multi-model",
+    "llm"
+  ],
+  "license": "MIT",
+  "author": "Hareeshkar Ravi <hareeshkarravi@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hareeshkar/opencode-subagent-delegate.git"
+  },
+  "homepage": "https://github.com/hareeshkar/opencode-subagent-delegate#readme",
+  "bugs": {
+    "url": "https://github.com/hareeshkar/opencode-subagent-delegate/issues"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": "^1.4.0",
+    "@opencode-ai/sdk": "^1.4.0"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "1.4.9",
+    "@types/node": "^26.4.1"
+  }
+}
