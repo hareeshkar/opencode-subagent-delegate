@@ -1,5 +1,9 @@
 # opencode-subagent-delegate
 
+[![npm version](https://img.shields.io/npm/v/opencode-subagent-delegate.svg)](https://www.npmjs.com/package/opencode-subagent-delegate)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/hareeshkar/opencode-subagent-delegate/blob/main/LICENSE)
+[![OpenCode 1.18.x](https://img.shields.io/badge/OpenCode-1.18.x-5C2D91)](https://opencode.ai/docs/plugins)
+
 Plug-and-play [OpenCode](https://opencode.ai) plugin for custom subagent model allocation — **V1 contract**: `delegate(model, task)` + `discover_models(query?)`.
 
 Run any task on any model available to your OpenCode install, per call, without restarting OpenCode or hardcoding `model:` in every agent definition.
