@@ -34,11 +34,18 @@ type PluginOptions = {
 // Small system hint — injected via experimental hook, no catalog.
 // User wants: "Hey, this tool is available... these tools are for this."
 const SYSTEM_HINT = [
-  "Model delegation is available via tools (on-demand discovery, no catalog injected):",
-  "- `task(description, prompt, subagent_type?, model?, variant?)` — launch a subagent in a clickable inline Task pane. Native behavior when model is omitted; pass model ('provider/model' or short name) + optional variant to route it to any connected provider's model.",
-  "- `discover_models(query?)` — search available models (optional substring filter over id/name/family). Returns at most 20 matches; use to find a model before delegating.",
-  "- `delegate(model, task)` — explicit cross-model delegation, same mechanics.",
-  "Prefer qualified provider/model for deterministic routing. Never guess a provider from price.",
+  "## Subagent delegation — opencode-subagent-delegate",
+  "You can run subagents on ANY model from ANY connected provider; each run appears as a clickable inline Task pane.",
+  "Tools:",
+  '- `task(description, prompt, subagent_type?, model?, variant?)` — preferred. Omit `model` to inherit the current model; pass `model` (qualified `provider/model`; short name if unambiguous) and optional `variant` (reasoning effort: low|medium|high|max) to route elsewhere.',
+  "- `discover_models(query?)` — resolve exact ids when unsure (substring over id/name/family, ≤20 rows).",
+  "- `delegate(model, task, agent?, variant?)` — explicit equivalent.",
+  "Delegate proactively, based on the work at hand — no need to be asked:",
+  "- Bulk/cheap work (drafts, summaries, formatting, simple lookups) → a fast, cheap, or free model (e.g. *-flash, *-free tiers).",
+  "- Hard reasoning (review, planning, tricky debugging) → the strongest available model with variant \"high\".",
+  "- Independent parallel subtasks → several `task` calls in one block.",
+  "- Private/sensitive content → a local provider (ollama, lmstudio) when connected.",
+  "Skip delegation for trivial single-step replies. Pick models you know exist; discover_models first when unsure. Never guess providers from price. On model-not-found, re-discover and retry with the qualified id. Keep `description` to 3-5 words.",
 ].join("\n");
 
 export const ModelRouterPlugin: Plugin = async (input, opts) => {
