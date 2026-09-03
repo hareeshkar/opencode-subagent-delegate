@@ -104,7 +104,7 @@ async function setRunningMetadata(
           (p as { state?: { status?: string; metadata?: Record<string, unknown> } }).state?.status === "running" &&
           !(p as { state?: { metadata?: Record<string, unknown> } }).state?.metadata?.sessionId,
       );
-      part = candidates[candidates.length - 1] as typeof part;
+      part = candidates[candidates.length - 1] as unknown as typeof part;
     }
     if (!part?.id) {
       void log(client, "warn", "live-metadata skipped: running task part not found", { callID, partCount: parts.length });
@@ -141,7 +141,7 @@ export class SessionExecutionAdapter implements ExecutionAdapter {
   async execute(
     entry: ModelEntry | null,
     task: string,
-    ctx: { sessionID: string; abort?: AbortSignal; directory?: string },
+    ctx: { sessionID: string; messageID?: string; callID?: string; abort?: AbortSignal; directory?: string },
     opts?: { agent?: string; variant?: string; title?: string },
   ): Promise<DelegationResult> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
