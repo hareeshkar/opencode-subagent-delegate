@@ -182,6 +182,8 @@ export const ModelRouterPlugin: Plugin = async (input, opts) => {
               prompt,
               {
                 sessionID: ctx.sessionID,
+                messageID: ctx.messageID,
+                callID: (ctx as { callID?: string }).callID,
                 abort: ctx.abort,
                 directory: ctx.directory,
               },
@@ -244,6 +246,8 @@ export const ModelRouterPlugin: Plugin = async (input, opts) => {
               task,
               {
                 sessionID: ctx.sessionID,
+                messageID: ctx.messageID,
+                callID: (ctx as { callID?: string }).callID,
                 abort: ctx.abort,
                 directory: ctx.directory,
               },

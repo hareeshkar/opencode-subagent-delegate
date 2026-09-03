@@ -20,7 +20,7 @@ export interface ExecutionAdapter {
   execute(
     entry: ModelEntry | null,
     task: string,
-    ctx: { sessionID: string; abort?: AbortSignal; directory?: string },
+    ctx: { sessionID: string; messageID?: string; callID?: string; abort?: AbortSignal; directory?: string },
     opts?: { agent?: string; variant?: string; title?: string },
   ): Promise<DelegationResult>;
 }
@@ -69,20 +69,51 @@ async function setRunningMetadata(
   metadata: Record<string, unknown>,
   title?: string,
 ): Promise<void> {
+  const sessionID = ctx?.sessionID;
+  const messageID = ctx?.messageID;
+  const callID = ctx?.callID;
   try {
-    const sessionID = ctx?.sessionID;
-    const messageID = ctx?.messageID;
-    const callID = ctx?.callID;
     const http = (client as { _client?: { patch?: (a: unknown) => Promise<unknown> } })?._client;
-    if (!sessionID || !messageID || !callID || typeof http?.patch !== "function") return;
+    if (!sessionID || !messageID) {
+      void log(client, "warn", "live-metadata skipped: missing ctx ids", {
+        hasSessionID: !!sessionID,
+        hasMessageID: !!messageID,
+        hasCallID: !!callID,
+      });
+      return;
+    }
+    if (typeof http?.patch !== "function") {
+      void log(client, "warn", "live-metadata skipped: no _client.patch", {});
+      return;
+    }
 
     const c = client as { session: { message: (a: unknown) => Promise<{ data?: { parts?: Array<Record<string, unknown>> } }> } };
     const msg = await c.session.message({ path: { id: sessionID, messageID } });
     const parts = msg?.data?.parts ?? [];
-    const part = parts.find((p) => p.type === "tool" && p.callID === callID) as
-      | { id?: string; state?: { status?: string; metadata?: Record<string, unknown> } }
+    // Primary: match this exact call by callID. Fallback (older runtimes omit
+    // callID from the tool context): the last still-running `task` part that
+    // doesn't carry a sessionId yet — ours.
+    let part = (callID ? parts.find((p) => p.type === "tool" && p.callID === callID) : undefined) as
+      | { id?: string; state?: { status?: string; metadata?: Record<string, unknown> }; tool?: string }
       | undefined;
-    if (!part?.id || part.state?.status !== "running") return;
+    if (!part) {
+      const candidates = parts.filter(
+        (p) =>
+          p.type === "tool" &&
+          (p as { tool?: string }).tool === "task" &&
+          (p as { state?: { status?: string; metadata?: Record<string, unknown> } }).state?.status === "running" &&
+          !(p as { state?: { metadata?: Record<string, unknown> } }).state?.metadata?.sessionId,
+      );
+      part = candidates[candidates.length - 1] as typeof part;
+    }
+    if (!part?.id) {
+      void log(client, "warn", "live-metadata skipped: running task part not found", { callID, partCount: parts.length });
+      return;
+    }
+    if (part.state?.status !== "running") {
+      void log(client, "warn", "live-metadata skipped: part not running", { status: String(part.state?.status) });
+      return;
+    }
 
     const next = {
       ...part,
@@ -96,8 +127,11 @@ async function setRunningMetadata(
       url: `/session/${sessionID}/message/${messageID}/part/${part.id}`,
       body: next,
     });
-  } catch {
-    // best-effort; never fail delegation over UI metadata
+    void log(client, "info", "live-metadata patched", { partID: part.id, sessionID });
+  } catch (e) {
+    void log(client, "warn", "live-metadata patch failed", {
+      error: e instanceof Error ? e.message : String(e),
+    });
   }
 }
 
