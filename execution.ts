@@ -11,17 +11,17 @@ import type { ModelEntry } from "./registry.js";
 
 export type DelegationResult = {
   output: string;
-  model: string; // qualified
+  model: string; // qualified, or "inherit" when no explicit model was requested
   sessionID: string;
   viaPreferred?: boolean;
 };
 
 export interface ExecutionAdapter {
   execute(
-    entry: ModelEntry,
+    entry: ModelEntry | null,
     task: string,
     ctx: { sessionID: string; abort?: AbortSignal; directory?: string },
-    opts?: { agent?: string; variant?: string },
+    opts?: { agent?: string; variant?: string; title?: string },
   ): Promise<DelegationResult>;
 }
 
@@ -105,18 +105,19 @@ export class SessionExecutionAdapter implements ExecutionAdapter {
   constructor(private deps: Deps) {}
 
   async execute(
-    entry: ModelEntry,
+    entry: ModelEntry | null,
     task: string,
     ctx: { sessionID: string; abort?: AbortSignal; directory?: string },
-    opts?: { agent?: string; variant?: string },
+    opts?: { agent?: string; variant?: string; title?: string },
   ): Promise<DelegationResult> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const clientAny = this.deps.client as any;
     const startedAt = Date.now();
+    const qualified = entry?.qualified ?? "inherit";
 
     // Child session parented to the invoking session — ALWAYS pass parentID so it
     // nests under the primary chat instead of appearing as a standalone session.
-    const title = `delegate:${entry.qualified}`;
+    const title = opts?.title ?? `delegate:${qualified}`;
     let childID: string;
     const created = await clientAny.session.create({
       body: { parentID: ctx.sessionID, title },
@@ -127,7 +128,7 @@ export class SessionExecutionAdapter implements ExecutionAdapter {
     }
 
     void log(this.deps.client, "info", "delegate started", {
-      model: entry.qualified,
+      model: qualified,
       agent: opts?.agent,
       variant: opts?.variant,
       childSessionID: childID,
@@ -155,7 +156,7 @@ export class SessionExecutionAdapter implements ExecutionAdapter {
         {
           sessionId: childID,
           parentSessionId: ctx.sessionID,
-          model: { providerID: entry.providerID, modelID: entry.modelID },
+          ...(entry ? { model: { providerID: entry.providerID, modelID: entry.modelID } } : {}),
         },
         title,
       );
@@ -163,10 +164,12 @@ export class SessionExecutionAdapter implements ExecutionAdapter {
       // v1 SDK shape: path.id. session.prompt resolves when the child run completes.
       // agent/variant are optional per-call overrides: agent is typed in v1; variant
       // is v2-typed but accepted by the 1.18.x server (verified by test).
+      // No explicit model → omit → child inherits the invoking message's model
+      // (native task behavior).
       const promptBody: Record<string, unknown> = {
-        model: { providerID: entry.providerID, modelID: entry.modelID },
         parts: [{ type: "text", text: task }],
       };
+      if (entry) promptBody.model = { providerID: entry.providerID, modelID: entry.modelID };
       if (opts?.agent) promptBody.agent = opts.agent;
       if (opts?.variant) promptBody.variant = opts.variant;
       const res = await clientAny.session.prompt({ path: { id: childID }, body: promptBody });
@@ -191,14 +194,14 @@ export class SessionExecutionAdapter implements ExecutionAdapter {
       const output = lastText || JSON.stringify(res?.data ?? {}).slice(0, 8000) || "(no output)";
 
       void log(this.deps.client, "info", "delegate completed", {
-        model: entry.qualified,
+        model: qualified,
         childSessionID: childID,
         durationMs: Date.now() - startedAt,
       });
-      return { output, model: entry.qualified, sessionID: childID };
+      return { output, model: qualified, sessionID: childID };
     } catch (e) {
       void log(this.deps.client, "error", "delegate failed", {
-        model: entry.qualified,
+        model: qualified,
         childSessionID: childID,
         durationMs: Date.now() - startedAt,
         error: e instanceof Error ? e.message : String(e),

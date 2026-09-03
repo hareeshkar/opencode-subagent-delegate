@@ -124,6 +124,16 @@ Use delegate(model="provider/model", task="...") with one of the above qualified
 
 If a query returns zero results, the registry is force-refreshed once (picks up newly authenticated providers) before giving up.
 
+### `task(description, prompt, subagent_type?, model?, variant?)` — native override
+
+Overrides OpenCode's built-in `task` tool (plugin tools take precedence — documented rule) to add **model routing** while keeping the Task pane clickable inline:
+
+- **No `model` passed** → native behavior: the subagent inherits your chat's model.
+- **`model` passed** → the subagent runs on that model instead, chosen from *any* connected provider.
+- `variant` → reasoning effort (e.g. `high`, `max`); `subagent_type` → the agent to run (`general`, `plan`, or any configured agent).
+
+Because the tool keeps the native `task` name, the TUI mounts its real Task renderer — the subagent pane is **clickable inside your parent chat** (navigation, duration, tool count), whether or not you routed it to another model.
+
 ### `delegate(model, task, agent?, variant?)`
 
 Runs `task` on the target model in a parented child session and returns the output.
@@ -200,6 +210,9 @@ Tested against OpenCode 1.18.26 with real runs (`opencode run --format json`), t
 - ✅ Structured logging via `client.app.log` — `delegate started/completed` with duration in the opencode log
 
 ## Changelog
+
+**1.2.0**
+- **Native `task` tool override** — subagents now render as **clickable Task panes inline** (the TUI mounts its Task renderer only for tools named `task`; `delegate` alone rendered as a generic line). Omit `model` for native inherit-behavior, pass `model`/`variant` to route anywhere.
 
 **1.1.0**
 - `agent` and `variant` optional args on `delegate` — per-call subagent allocation and reasoning-effort control

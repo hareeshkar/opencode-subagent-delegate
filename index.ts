@@ -35,8 +35,9 @@ type PluginOptions = {
 // User wants: "Hey, this tool is available... these tools are for this."
 const SYSTEM_HINT = [
   "Model delegation is available via tools (on-demand discovery, no catalog injected):",
+  "- `task(description, prompt, subagent_type?, model?, variant?)` — launch a subagent in a clickable inline Task pane. Native behavior when model is omitted; pass model ('provider/model' or short name) + optional variant to route it to any connected provider's model.",
   "- `discover_models(query?)` — search available models (optional substring filter over id/name/family). Returns at most 20 matches; use to find a model before delegating.",
-  "- `delegate(model, task)` — run a task with another model. `model` may be short (e.g. \"gemini-3.7\") or qualified \"provider/model\" (e.g. \"google/gemini-2.5-flash\" or \"openrouter/google/gemini-3.7\"). If short name is ambiguous, re-call with qualified provider/model.",
+  "- `delegate(model, task)` — explicit cross-model delegation, same mechanics.",
   "Prefer qualified provider/model for deterministic routing. Never guess a provider from price.",
 ].join("\n");
 
@@ -49,6 +50,21 @@ export const ModelRouterPlugin: Plugin = async (input, opts) => {
   const registry = new Registry({ client: input.client }, { ttlMs });
   const resolver = new Resolver(registry, { preferredProviders });
   const execution = new SessionExecutionAdapter({ client: input.client });
+
+  // Shared resolution path for both tools: force-refresh once on NotFound /
+  // ambiguous short names — self-heals stale caches and picks up fresh auth.
+  const resolveModel = async (modelInput: string) => {
+    await registry.load();
+    let result = resolver.resolve(modelInput);
+    if (result.kind === "not_found" || (result.kind === "ambiguous" && !modelInput.includes("/"))) {
+      await registry.load({ force: true });
+      const retry = resolver.resolve(modelInput);
+      // only upgrade if retry is strictly better (resolved vs ambiguous/not_found)
+      if (retry.kind === "resolved") result = retry;
+      else if (retry.kind === "ambiguous" && result.kind === "not_found") result = retry;
+    }
+    return result;
+  };
 
   // Best-effort eager load — warms cache without blocking startup. Failure is non-fatal.
   registry.load().catch(() => {});
@@ -115,6 +131,77 @@ export const ModelRouterPlugin: Plugin = async (input, opts) => {
         },
       }),
 
+      task: tool({
+        description:
+          "Launch a subagent in a parented child session — renders as a clickable Task pane inline in this chat. Native behavior when model is omitted (child inherits this session's model). Pass model (short or qualified 'provider/model') and optional variant (reasoning effort, e.g. 'high') to route the subagent to any model from any connected provider.",
+        args: {
+          description: tool.schema.string().describe("Short 3-5 word description of the task"),
+          prompt: tool.schema.string().describe("The task for the subagent to perform"),
+          subagent_type: tool.schema
+            .string()
+            .optional()
+            .describe("The agent for the subagent to use (e.g. 'general', 'plan', or a configured agent name). Defaults to 'general'."),
+          model: tool.schema
+            .string()
+            .optional()
+            .describe("model id — short name or qualified provider/model (e.g. 'google/gemini-2.5-flash'). Omit to inherit this session's model (native behavior)."),
+          variant: tool.schema
+            .string()
+            .optional()
+            .describe("optional model variant / reasoning effort for the subagent (e.g. 'low', 'high', 'max')"),
+        },
+        async execute(args, ctx) {
+          const prompt = String(args.prompt ?? "").trim();
+          const description = String(args.description ?? "").trim();
+          if (!prompt) return "Error: prompt is required — what should the subagent do?";
+          if (!description) return "Error: description is required — a short 3-5 word summary of the task.";
+
+          const agent = String(args.subagent_type ?? "").trim() || "general";
+          const modelInput = String(args.model ?? "").trim();
+          const variant = String(args.variant ?? "").trim() || undefined;
+
+          // Resolve the target model — or inherit (null) for native behavior.
+          let entry = null;
+          if (modelInput) {
+            const resolved = await resolveModel(modelInput);
+            if (resolved.kind === "not_found") return formatNotFound(resolved);
+            if (resolved.kind === "ambiguous") return formatAmbiguous(resolved);
+            entry = resolved.entry;
+          }
+
+          try {
+            const out = await execution.execute(
+              entry,
+              prompt,
+              {
+                sessionID: ctx.sessionID,
+                abort: ctx.abort,
+                directory: ctx.directory,
+              },
+              { agent, ...(variant ? { variant } : {}), title: description },
+            );
+            // Tool name is "task" → the TUI mounts its clickable Task renderer,
+            // keyed off metadata.sessionId (camelCase) for child sync + navigation.
+            return {
+              output: renderOutput(out.sessionID, "completed", out.output),
+              metadata: {
+                sessionId: out.sessionID,
+                parentSessionId: ctx.sessionID,
+                ...(entry ? { model: { providerID: entry.providerID, modelID: entry.modelID } } : {}),
+              },
+            };
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            return {
+              output: renderOutput(entry?.qualified ?? agent, "error", `task failed: ${msg}`),
+              metadata: {
+                ...(entry ? { model: { providerID: entry.providerID, modelID: entry.modelID } } : {}),
+              },
+            };
+          }
+        },
+      }),
+
       delegate: tool({
         description:
           "Delegate a task to a specific model as a parented subagent (renders inline). Model may be short ('gemini-3.7') or qualified 'provider/model' ('google/gemini-2.5-flash'). If ambiguous, returns matches to retry with qualified id. Optional: agent (run the child as a named agent, e.g. 'plan') and variant (model reasoning variant, e.g. 'high' or 'max').",
@@ -138,28 +225,15 @@ export const ModelRouterPlugin: Plugin = async (input, opts) => {
           if (!modelInput) return "Error: model is required — e.g. 'google/gemini-2.5-flash' or 'gemini-3.7'. Use discover_models() to list options.";
           if (!task) return "Error: task is required — what should the delegated model do?";
 
-          await registry.load();
-          let result = resolver.resolve(modelInput);
-
-          // On NotFound (short OR qualified) / ambiguous short name, try one forced
-          // refresh before giving up. Qualified NotFound retry self-heals stale
-          // registry caches (models renamed upstream while the cache is old).
-          if (result.kind === "not_found" || (result.kind === "ambiguous" && !modelInput.includes("/"))) {
-            await registry.load({ force: true });
-            // re-create resolver with fresh registry (same object, entries updated)
-            const retry = resolver.resolve(modelInput);
-            // only upgrade if retry is strictly better (resolved vs ambiguous/not_found)
-            if (retry.kind === "resolved") result = retry;
-            else if (retry.kind === "ambiguous" && result.kind === "not_found") result = retry;
-          }
-
-          if (result.kind === "not_found") return formatNotFound(result);
-          if (result.kind === "ambiguous") return formatAmbiguous(result);
+          const resolvedResult = await resolveModel(modelInput);
+          if (resolvedResult.kind === "not_found") return formatNotFound(resolvedResult);
+          if (resolvedResult.kind === "ambiguous") return formatAmbiguous(resolvedResult);
+          const entry = resolvedResult.entry;
 
           // Resolved → execute via child session
           try {
             const out = await execution.execute(
-              result.entry,
+              entry,
               task,
               {
                 sessionID: ctx.sessionID,
@@ -178,21 +252,21 @@ export const ModelRouterPlugin: Plugin = async (input, opts) => {
               metadata: {
                 sessionId: out.sessionID,
                 parentSessionId: ctx.sessionID,
-                model: { providerID: result.entry.providerID, modelID: result.entry.modelID },
+                model: { providerID: entry.providerID, modelID: entry.modelID },
               },
             };
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             let hint = `Delegate failed: ${msg}`;
             if (msg.includes("ModelUnavailableError") || msg.toLowerCase().includes("model") && msg.toLowerCase().includes("unavailable")) {
-              hint = `Model "${result.entry.qualified}" unavailable for this request: ${msg}\nTry another provider for same family, e.g. discover_models("${result.entry.modelID.split("/").pop() ?? result.entry.modelID}")`;
+              hint = `Model "${entry.qualified}" unavailable for this request: ${msg}\nTry another provider for same family, e.g. discover_models("${entry.modelID.split("/").pop() ?? entry.modelID}")`;
             } else if (msg.toLowerCase().includes("auth") || msg.toLowerCase().includes("api key")) {
-              hint = `Provider auth error for "${result.entry.qualified}": ${msg}\nCheck ~/.local/share/opencode/auth.json credential for provider "${result.entry.providerID}".`;
+              hint = `Provider auth error for "${entry.qualified}": ${msg}\nCheck ~/.local/share/opencode/auth.json credential for provider "${entry.providerID}".`;
             }
             return {
-              output: renderOutput(result.entry.qualified, "error", hint),
+              output: renderOutput(entry.qualified, "error", hint),
               metadata: {
-                model: { providerID: result.entry.providerID, modelID: result.entry.modelID },
+                model: { providerID: entry.providerID, modelID: entry.modelID },
               },
             };
           }
