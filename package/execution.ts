@@ -21,7 +21,7 @@ export interface ExecutionAdapter {
     entry: ModelEntry | null,
     task: string,
     ctx: { sessionID: string; messageID?: string; callID?: string; abort?: AbortSignal; directory?: string },
-    opts?: { agent?: string; variant?: string; title?: string; onChild?: (childID: string) => void },
+    opts?: { agent?: string; variant?: string; title?: string },
   ): Promise<DelegationResult>;
 }
 
@@ -142,7 +142,7 @@ export class SessionExecutionAdapter implements ExecutionAdapter {
     entry: ModelEntry | null,
     task: string,
     ctx: { sessionID: string; messageID?: string; callID?: string; abort?: AbortSignal; directory?: string },
-    opts?: { agent?: string; variant?: string; title?: string; onChild?: (childID: string) => void },
+    opts?: { agent?: string; variant?: string; title?: string },
   ): Promise<DelegationResult> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const clientAny = this.deps.client as any;
@@ -182,16 +182,6 @@ export class SessionExecutionAdapter implements ExecutionAdapter {
     }
 
     try {
-      // Native ordering: metadata (incl. sessionId) is published BEFORE the first
-      // child event reaches clients, so the TUI Task pane mounts with the child
-      // already attached. The onChild callback runs ctx.metadata() when bridged;
-      // the live PATCH below remains the fallback for unbridged runtimes.
-      if (opts?.onChild) {
-        try {
-          opts.onChild(childID);
-        } catch {}
-      }
-
       // Light up the live TUI branch before the blocking prompt. ctx.callID rides
       // along on the tool context at runtime even though the type omits it.
       await setRunningMetadata(

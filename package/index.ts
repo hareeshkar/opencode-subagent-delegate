@@ -177,17 +177,6 @@ export const ModelRouterPlugin: Plugin = async (input, opts) => {
           }
 
           try {
-            // Native parity: publish metadata via ctx.metadata() the moment the child
-            // exists — BEFORE any child event reaches the TUI — so the Task pane
-            // mounts with the child attached and the live line syncs from t=0.
-            const childMeta = (childID: string) => ({
-              title: description,
-              metadata: {
-                sessionId: childID,
-                parentSessionId: ctx.sessionID,
-                ...(entry ? { model: { providerID: entry.providerID, modelID: entry.modelID } } : {}),
-              },
-            });
             const out = await execution.execute(
               entry,
               prompt,
@@ -198,16 +187,7 @@ export const ModelRouterPlugin: Plugin = async (input, opts) => {
                 abort: ctx.abort,
                 directory: ctx.directory,
               },
-              {
-                agent,
-                ...(variant ? { variant } : {}),
-                title: description,
-                onChild: (childID) => {
-                  try {
-                    (ctx as unknown as { metadata?: (i: ReturnType<typeof childMeta>) => void }).metadata?.(childMeta(childID));
-                  } catch {}
-                },
-              },
+              { agent, ...(variant ? { variant } : {}), title: description },
             );
             // Tool name is "task" → the TUI mounts its clickable Task renderer,
             // keyed off metadata.sessionId (camelCase) for child sync + navigation.
