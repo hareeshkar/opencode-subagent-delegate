@@ -2,7 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/opencode-subagent-delegate.svg)](https://www.npmjs.com/package/opencode-subagent-delegate)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/hareeshkar/opencode-subagent-delegate/blob/main/LICENSE)
-[![OpenCode 1.18.x](https://img.shields.io/badge/OpenCode-1.18.x-5C2D91)](https://opencode.ai/docs/plugins)
+[![OpenCode 1.18.29+ / 2.x](https://img.shields.io/badge/OpenCode-1.18.29%2B%20%7C%202.x-5C2D91)](https://opencode.ai/docs/plugins)
 
 > **You've connected a fleet of providers. Your subagents still run on one model.**
 > This plugin makes the whole fleet callable — as inline, clickable subagents, one config line, zero model lists to maintain.
@@ -51,9 +51,18 @@ One conversation, three providers, zero config edits, zero restarts.
 
 ## Install
 
-No global npm install, no build step — OpenCode fetches and runs the plugin itself. You only edit your `opencode.json`:
+No global npm install, no build step — OpenCode fetches and runs the plugin itself. You only edit your `opencode.json`.
 
-**Global** (all projects) — `~/.config/opencode/opencode.json`:
+**OpenCode 2.x** — the config key is `plugins`:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": ["opencode-subagent-delegate"]
+}
+```
+
+**OpenCode 1.x** — the config key is `plugin`:
 
 ```json
 {
@@ -62,13 +71,13 @@ No global npm install, no build step — OpenCode fetches and runs the plugin it
 }
 ```
 
-**Per-project** — same snippet in an `opencode.json` at your project root.
+Place it in the global config (`~/.config/opencode/opencode.json`, all projects) or in an `opencode.json` at your project root.
 
-Then **restart OpenCode**. At startup, OpenCode's Bun runtime resolves the package, installs it, and caches it under `~/.cache/opencode/node_modules/` — TypeScript source is executed directly, so nothing to compile.
+Then **restart OpenCode**. At startup OpenCode resolves the package, installs it (1.x: `~/.cache/opencode/node_modules/`, 2.x: `~/.cache/opencode/npm/`), and runs the TypeScript source directly — nothing to compile.
 
 **Verify**: in any session, ask the model to call `discover_models("...")` — if the tool responds, the plugin is live.
 
-Pin a version if you want reproducibility: `"opencode-subagent-delegate@1.0.1"`.
+Pin a version for reproducibility: `"opencode-subagent-delegate@1.3.0"`.
 
 <details>
 <summary>Editor type hints (optional)</summary>
@@ -83,13 +92,13 @@ OpenCode auto-loads every `.ts`/`.js` file directly inside `~/.config/opencode/p
 
 ```bash
 mkdir -p ~/.config/opencode/plugins/model-router
-cp index.ts registry.ts resolver.ts execution.ts ~/.config/opencode/plugins/model-router/
+cp index.ts v1.ts v2.ts registry.ts resolver.ts execution.ts ~/.config/opencode/plugins/model-router/
 cat > ~/.config/opencode/plugins/model-router.ts <<'EOF'
-export { ModelRouterPlugin as default } from "./model-router/index.js"
+export { default } from "./model-router/index.js"
 EOF
 ```
 
-No config edit needed — restart OpenCode.
+The wrapper re-exports the dual entrypoint, so this works on both 1.x (≥ 1.18.29) and 2.x. No config edit needed — restart OpenCode.
 
 > ⚠️ **Don't use both install methods at once.** OpenCode loads local plugins and npm plugins separately even with similar names — a local copy *plus* the npm config entry registers `delegate` / `discover_models` twice. Pick one.
 
@@ -106,7 +115,7 @@ Duplicate npm packages with the same name and version are loaded once.
 
 ### Tool precedence
 
-OpenCode's documented rule: **if a plugin tool uses the same name as a built-in tool, the plugin tool takes precedence.** `opencode-subagent-delegate` only registers `delegate` and `discover_models` (no built-in collision), so it composes cleanly with task-override plugins.
+OpenCode's documented rule: **if a plugin tool uses the same name as a built-in tool, the plugin tool takes precedence** (a later registration overrides the same effective tool name). `opencode-subagent-delegate` registers `delegate` and `discover_models` (no built-in collision) and deliberately overrides the built-in `task` with a routing-aware equivalent — on both 1.x and 2.x.
 
 ## Tools
 
@@ -164,7 +173,9 @@ On short-name misses, the registry is force-refreshed once before failing (handl
 
 ## Configuration
 
-All options are optional and passed as the second element of the plugin tuple:
+All options are optional.
+
+**OpenCode 1.x** — pass them as the second element of the plugin tuple:
 
 ```json
 {
@@ -174,6 +185,23 @@ All options are optional and passed as the second element of the plugin tuple:
       "registryTtlMs": 300000,
       "hintInSystemPrompt": true
     }]
+  ]
+}
+```
+
+**OpenCode 2.x** — use the object form; options arrive via `ctx.options`:
+
+```json
+{
+  "plugins": [
+    {
+      "package": "opencode-subagent-delegate",
+      "options": {
+        "preferredProviders": { "gemini": "google", "claude": "opencode" },
+        "registryTtlMs": 300000,
+        "hintInSystemPrompt": true
+      }
+    }
   ]
 }
 ```
@@ -188,7 +216,7 @@ All options are optional and passed as the second element of the plugin tuple:
 
 No provider registration, no model lists. The registry mirrors OpenCode's own provider layer — the same one your `/connect` command and `provider` config feed:
 
-1. **SDK merged catalog** (`client.config.providers()` / `client.provider.list()`) — covers everything OpenCode resolves: `/connect`-authenticated providers (`~/.local/share/opencode/auth.json`), Models.dev catalog entries, OpenCode Zen and Go.
+1. **Live merged catalog** (V1: `client.config.providers()` / `client.provider.list()`; V2: `ctx.model.list()`) — covers everything OpenCode resolves: `/connect`-authenticated providers (`~/.local/share/opencode/auth.json`), Models.dev catalog entries, OpenCode Zen and Go.
 2. **Filesystem fallback** — reads `~/.config/opencode/opencode.json` `provider.models` (authoritative for custom gateways: internal endpoints, Ollama, LM Studio, llama.cpp) plus the provider cache filtered to `/connect`-authenticated providers.
 
 If a query returns zero results, the registry force-refreshes once — a provider you authenticated mid-session becomes discoverable without restarting. Unknown or renamed ids fall back to the server's own suggestion list, and the orchestrating model self-corrects via `discover_models` (tested and self-correcting).
@@ -197,7 +225,7 @@ Auth flows out; secrets never do: keys are read internally to *filter* the catal
 
 ## Verified
 
-Tested against OpenCode 1.18.26 with real runs (`opencode run --format json`), then asserted at the data layer:
+**V1 (OpenCode 1.18.x)** — real runs (`opencode run --format json`), then asserted at the data layer:
 
 - ✅ Plugin auto-loads from `~/.config/opencode/plugins/` and via npm config
 - ✅ `discover_models` returns qualified ids the resolver accepts back
@@ -209,7 +237,22 @@ Tested against OpenCode 1.18.26 with real runs (`opencode run --format json`), t
 - ✅ `variant` arg reaches the child run (assistant message record shows `variant: high`)
 - ✅ Structured logging via `client.app.log` — `delegate started/completed` with duration in the opencode log
 
+**V2 (OpenCode 2.0.15)** — live local drop-in of this repo, real runs:
+
+- ✅ Dual entrypoint loads (`{ id, setup, server }`) — V2 runs `setup()`, the V1 object detection is ignored
+- ✅ Tools register through the V2 tool editor (`editor.add`) — `task`, `delegate`, `discover_models` all live
+- ✅ `discover_models` returns the live merged catalog (`ctx.model.list()` + filesystem fallback)
+- ✅ `delegate` and `task` run end-to-end: `session.create → prompt → wait → context`, child id returned in ToolResult `metadata`
+- ✅ Parent abort propagates — the tool signal interrupts the child (`session.interrupt`)
+- ✅ Concurrent delegations both complete; the second request queues on the provider side (observed 3–150 s on a free tier) and the tool reports progress while waiting instead of appearing hung
+
 ## Changelog
+
+**1.3.0**
+- **OpenCode 2.x support — dual entrypoint.** One package serves both plugin APIs from a single default export: V2 calls `setup()`, V1 (≥ 1.18.29) calls `server()`. V2 delegation runs `session.create → prompt → wait → context`, tools register via `ctx.tool.transform`, the system hint via `ctx.session.hook("context")`, and abort is wired to `session.interrupt`.
+- **Robust V2 waits** — races `session.wait()` against `time.idle` polling, reports progress while a child runs, and interrupts + reports at a 30-minute ceiling instead of hanging.
+- **Derived child titles on V2** — `delegate` titles the child from the task text, skipping an extra auto-title model call per delegation.
+- V1 behavior unchanged; `engines.opencode: >=1.18.29` guards the object-entrypoint requirement (older 1.x: pin `1.2.5`).
 
 **1.2.0**
 - **Native `task` tool override** — subagents now render as **clickable Task panes inline** (the TUI mounts its Task renderer only for tools named `task`; `delegate` alone rendered as a generic line). Omit `model` for native inherit-behavior, pass `model`/`variant` to route anywhere.
@@ -230,6 +273,17 @@ Tested against OpenCode 1.18.26 with real runs (`opencode run --format json`), t
 client.session.create({ body: { parentID, title } })   → child session nested under your chat
 client.session.prompt({ path: { id }, body: { model, parts } })  → blocks until the child completes
 ```
+
+On OpenCode 2.x the same flow uses the plugin context:
+
+```
+ctx.session.create({ model, agent, title })   → child session
+ctx.session.prompt({ sessionID, text })       → admit the task
+ctx.session.wait({ sessionID })               → run to completion (polled + ceiling-guarded)
+ctx.session.context({ sessionID })            → read the final assistant text
+```
+
+V2 session creation has no `parentID` (only forks carry one), so the child is a standalone session and the inline Task pane is driven by the ToolResult `metadata` (`sessionId`, `parentSessionId`). While a child runs, the tool reports progress (`subagent running Ns`); aborting the parent interrupts the child via `session.interrupt`. A delegation that exceeds the 30-minute ceiling is interrupted and reported as an error instead of hanging.
 
 ### Inline rendering in the primary chat
 
@@ -254,29 +308,52 @@ The `ExecutionAdapter` interface is swappable — if OpenCode ships a native per
 
 ## Compatibility
 
-Built and tested against OpenCode 1.18.x / `@opencode-ai/plugin` 1.4.9 / SDK 1.4.9. Execution uses the v1 client surface (`session.create` with `body.parentID`, `session.prompt` with `path.id`) — the shapes the plugin receives at runtime.
+| OpenCode | Entry called | Status |
+|----------|--------------|--------|
+| 2.x (2.0.15) | `setup()` | ✅ tested |
+| 1.18.29 – 1.18.32 | `server()` | ✅ object entrypoints landed in 1.18.29 |
+| 1.18.0 – 1.18.28 | — | ❌ pin `opencode-subagent-delegate@1.2.5` |
+
+`package.json` declares `"engines": { "opencode": ">=1.18.29" }`, so older 1.x releases refuse the plugin with a clear message instead of failing silently.
+
+Execution surfaces: 1.x uses the v1 client (`session.create` with `body.parentID`, `session.prompt` with `path.id`); 2.x uses the plugin context (`ctx.session.create/prompt/wait/context/interrupt`, tools via `ctx.tool.transform`, system hint via `ctx.session.hook("context")`).
+
+**Performance note** — concurrent delegations to the same throttled provider (typically free tiers) queue on the provider side: the first request runs immediately, the second can wait seconds to a couple of minutes before it starts. The tool reports progress while waiting and results still arrive — spread parallel delegations across different providers for predictable latency.
 
 ## Architecture
 
-A standard OpenCode plugin module — one factory function receiving `{ project, client, $, directory, worktree }`, returning hooks and tool definitions:
+One package, two implementations, one default export:
 
-| Component | Plugin API used | Role |
-|-----------|----------------|------|
+```text
+index.ts  →  export default { id, setup: v2.setup, server: v1.ModelRouterPlugin }
+                │                                  │
+                │ V2 (2.x)                         │ V1 (≥ 1.18.29)
+                ▼                                  ▼
+             v2.ts                    v1.ts  (+ registry.ts / resolver.ts / execution.ts)
+```
+
+- **`v2.ts`** — V2 plugin API, self-contained: tools via `ctx.tool.transform(editor.add)`, system hint via `ctx.session.hook("context")`, catalog via `ctx.model.list()` with filesystem fallback, child runs via `ctx.session.*` (progress + ceiling-guarded waits).
+- **`v1.ts` + support modules** — V1 plugin API: one factory receiving `{ project, client, $, directory, worktree }`, returning hooks and tool definitions.
+
+| V1 component | Plugin API used | Role |
+|--------------|----------------|------|
 | `Registry` | SDK client | Merged model catalog with TTL cache and scored substring search |
 | `Resolver` | — (pure) | `(providerID, modelID)` resolution, ambiguity lists, `preferredProviders` tie-breaks |
 | `SessionExecutionAdapter` | `client.session.create/prompt/abort/message` | Parented child-session spawn, live metadata PATCH, abort wiring |
 | `tool: discover_models` | `tool()` helper + Zod schema | On-demand catalog search (≤20 rows, no prices) |
-| `tool: delegate` | `tool()` helper + Zod schema | Cross-model subagent execution with inline TUI rendering |
+| `tool: delegate` / `tool: task` | `tool()` helper + Zod schema | Cross-model subagent execution with inline TUI rendering |
 | System hint | `experimental.chat.system.transform` | ~4-line tool availability note; the catalog itself is never injected |
 
 Types come from `@opencode-ai/plugin`; `@opencode-ai/sdk` is a peer dependency resolved against OpenCode's own runtime — the published package ships TypeScript source that Bun executes directly.
 
 ## Files
 
-- `index.ts` — plugin entry: tools + system hint.
-- `registry.ts` — merged catalog, TTL cache, scored search.
-- `resolver.ts` — `provider/model` parsing, `preferredProviders`, explicit ambiguity.
-- `execution.ts` — `SessionExecutionAdapter` + inline-rendering helpers.
+- `index.ts` — dual entrypoint: `{ id, setup, server }`.
+- `v2.ts` — OpenCode 2.x implementation (self-contained).
+- `v1.ts` — OpenCode 1.x implementation entry: tools + system hint.
+- `registry.ts` — merged catalog, TTL cache, scored search (V1).
+- `resolver.ts` — `provider/model` parsing, `preferredProviders`, explicit ambiguity (V1).
+- `execution.ts` — `SessionExecutionAdapter` + inline-rendering helpers (V1).
 
 ## License
 
