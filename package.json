@@ -15,6 +15,7 @@
     "resolver.ts",
     "execution.ts",
     "README.md",
+    "DEVELOPERS.md",
     "LICENSE"
   ],
   "engines": {
