@@ -19,6 +19,7 @@ import { readFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { isFreeModel, renderFreeResults, renderSearchResults, type ModelEntry } from "./listing.js"
+import { mergeConfigModels, readConfigModels, type ConfigModel } from "./config-models.js"
 
 /* ------------------------------------------------------------------ options */
 
@@ -191,20 +192,23 @@ class Registry {
   }
 
   private async fetchMerged(): Promise<ModelEntry[]> {
-    const [fromApi, fromFs] = await Promise.all([
+    const [fromApi, fromFs, configs] = await Promise.all([
       this.fetchFromApi().catch(() => [] as ModelEntry[]),
       this.fetchFromFilesystem().catch(() => [] as ModelEntry[]),
+      readConfigModels().catch(() => [] as ConfigModel[]),
     ])
     if (fromApi.length === 0) return fromFs
+    // Both sources are inspected together: enrich primary entries with config
+    // signals (same provider + same id) and keep config-only models visible.
+    // The filesystem merge below is only for entries neither source produced.
+    const enriched = mergeConfigModels(fromApi, configs)
     const byQualified = new Map<string, ModelEntry>()
-    for (const e of fromApi) byQualified.set(e.qualified, e)
+    for (const e of enriched) byQualified.set(e.qualified, e)
     for (const e of fromFs) {
       if (!byQualified.has(e.qualified)) byQualified.set(e.qualified, e)
     }
     const merged = Array.from(byQualified.values())
     merged.sort((a, b) => a.qualified.localeCompare(b.qualified))
-    // API gave suspiciously few (<20) but FS gave many more → prefer merged (boot race)
-    if (fromApi.length < 20 && merged.length > fromApi.length * 2) return merged
     return merged
   }
 

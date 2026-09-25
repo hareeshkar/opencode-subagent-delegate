@@ -1,6 +1,6 @@
 {
   "name": "opencode-subagent-delegate",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "Plug-and-play OpenCode plugin (V1 + V2): delegate(model, task) + discover_models(query) — on-demand model discovery, explicit provider/model subagent execution, no pricing heuristics, registry never injected into context.",
   "type": "module",
   "main": "index.ts",
@@ -8,7 +8,7 @@
     ".": "./index.ts"
   },
   "scripts": {
-    "test": "node test/listing.test.ts",
+    "test": "node test/listing.test.ts && node test/config-models.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "files": [
@@ -16,6 +16,7 @@
     "v1.ts",
     "v2.ts",
     "listing.ts",
+    "config-models.ts",
     "registry.ts",
     "resolver.ts",
     "execution.ts",

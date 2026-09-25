@@ -99,7 +99,14 @@ discover_models(free=true)
   ...
 ```
 
-Free detection is a **union**: (1) every reported cost tier is zero — catches Nvidia free tiers and plan-included models; (2) the id ends in `-free` or the name contains "free" — the fallback for providers that do not report cost data. Models with unknown cost and no free signal are excluded. Normal results annotate other providers carrying the same model (free siblings are marked); the free listing groups everything by provider.
+Free detection inspects **both sources together** whenever the runtime catalog is available:
+
+1. **Runtime model info** (V2 `ctx.model.list()`; V1 `client.config.providers()`) — every reported cost tier is zero, or its own id/name marks free.
+2. **`opencode.json` entries** (`provider.<id>.models`) — the config name/id marks free, or a config-declared cost is zero.
+
+`free = primary cost ∪ primary naming ∪ config naming ∪ config cost`. Correlation is exact and same-provider only: a config entry joins a primary entry when both the providerID and the model id agree (config `id`/key equals the primary modelID, or the raw config key does). Unrelated models are never combined; config-only models are appended.
+
+`fetchFromFilesystem` is the fallback path for when the primary source itself fails or returns nothing — not the free-detection path. Models with no cost data and no free signal in either source are excluded. Normal results annotate other providers carrying the same model (free siblings are marked); the free listing groups everything by provider.
 
 If a query returns zero results, the registry is force-refreshed once (picks up newly authenticated providers) before giving up.
 
@@ -213,6 +220,7 @@ index.ts  →  export default { id, setup: v2.setup, server: v1.ModelRouterPlugi
   - child runs via `ctx.session.*` with progress reporting and a ceiling-guarded wait
 - **`v1.ts` + support modules** — V1 plugin API: one factory receiving `{ project, client, $, directory, worktree }`, returning hooks and tool definitions.
 - **`listing.ts`** — shared, dependency-free listing helpers: the `ModelEntry` shape, free detection (cost tiers + naming fallback), and the `discover_models` renderers. Both implementations use it, so V1 and V2 output cannot drift.
+- **`config-models.ts`** — reads `opencode.json` custom provider models and merges their free signals into primary entries (exact, same-provider matching). Shared by V1 and V2.
 
 | V1 component | Plugin API used | Role |
 |--------------|----------------|------|
@@ -293,6 +301,7 @@ Auth flows out; secrets never do: keys are read internally to *filter* the catal
 - ✅ `readV1Plugin` detects the default object (`id` + `server()`) and calls `server()`
 - ✅ `discover_models("mimo")` → 20 of 24 matches from the live v1 catalog
 - ✅ `delegate(model="opencode/mimo-v2.6-flash-free", task="Reply with exactly: PONG")` → `PONG`
+- ✅ Same dual-source free detection on V1 (`client.config.providers()` + `opencode.json`); the V1 SDK exposes full cost data (zero-cost tiers for free models)
 
 **V2 (OpenCode 2.0.15–2.0.16)** — live local drop-in of this repo:
 
@@ -303,7 +312,8 @@ Auth flows out; secrets never do: keys are read internally to *filter* the catal
 - ✅ Concurrent delegations both complete; the second request queues on the provider side and the tool reports progress instead of appearing hung
 - ✅ Abort signal wired to `session.interrupt` on the child
 - ✅ Routing policy verified live: no model → the child inherits the session model; `"free"` class → discovered and routed to a `*-free` model; named unique model → routed directly (including an Nvidia free-tier model); named multi-provider model (`glm-5.3-flash`, 5 providers) → the agent presents the matches and **asks the user** (no child session until a choice is made); follow-up choice → executed on the chosen provider
-- ✅ `discover_models(free=true)` lists zero-cost models grouped by provider (cost-based, incl. Nvidia + plan-included; naming fallback when cost is missing) and normal results annotate multi-provider models with free siblings marked
+- ✅ `discover_models(free=true)` lists zero-cost models grouped by provider; normal results annotate multi-provider models with free siblings marked
+- ✅ Dual-source free detection: a config-only provider model (no cost data, name marks free) is detected through `opencode.json` while the runtime catalog is live
 
 ## Development
 
@@ -331,6 +341,8 @@ Notes:
 - `resolver.ts` — `provider/model` parsing, `preferredProviders`, explicit ambiguity (V1).
 - `execution.ts` — `SessionExecutionAdapter` + inline-rendering helpers (V1).
 - `listing.ts` — shared entry shape, free detection, and listing renderers (pure; used by V1 and V2).
+- `config-models.ts` — opencode.json model reader + config↔catalog signal merge (shared).
 - `test/listing.test.ts` — unit tests for the shared helpers (`npm test`).
+- `test/config-models.test.ts` — unit tests for the config merge + reader (`npm test`).
 - `tsconfig.json` — strict typecheck config.
 - `README.md` — user-facing overview. This file — engineering reference.

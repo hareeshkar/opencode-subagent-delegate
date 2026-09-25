@@ -7,6 +7,7 @@
 
 import type { createOpencodeClient } from "@opencode-ai/sdk";
 import { isFreeModel, type ModelEntry } from "./listing.js";
+import { mergeConfigModels, readConfigModels, type ConfigModel } from "./config-models.js";
 
 // The entry shape and the discover_models renderers live in the shared,
 // dependency-free listing.ts so V1 and V2 output cannot drift.
@@ -224,18 +225,23 @@ export class Registry {
   }
 
   private async fetchMerged(): Promise<ModelEntry[]> {
-    const [fromSdk, fromFs] = await Promise.all([this.fetchFromSdk().catch(() => [] as ModelEntry[]), this.fetchFromFilesystem().catch(() => [] as ModelEntry[])]);
-    // Prefer SDK but merge any FS entries that SDK missed (e.g. bailian/mimo, github-copilot if SDK filters them)
+    const [fromSdk, fromFs, configs] = await Promise.all([
+      this.fetchFromSdk().catch(() => [] as ModelEntry[]),
+      this.fetchFromFilesystem().catch(() => [] as ModelEntry[]),
+      readConfigModels().catch(() => [] as ConfigModel[]),
+    ]);
+    // Both sources are inspected together: enrich SDK entries with config
+    // signals (same provider + same id) and keep config-only models visible.
+    // The filesystem merge below is only for entries neither source produced.
     if (fromSdk.length === 0) return fromFs;
+    const enriched = mergeConfigModels(fromSdk, configs);
     const byQualified = new Map<string, ModelEntry>();
-    for (const e of fromSdk) byQualified.set(e.qualified, e);
+    for (const e of enriched) byQualified.set(e.qualified, e);
     for (const e of fromFs) {
       if (!byQualified.has(e.qualified)) byQualified.set(e.qualified, e);
     }
     const merged = Array.from(byQualified.values());
     merged.sort((a, b) => a.qualified.localeCompare(b.qualified));
-    // If SDK gave suspiciously few (<20) but FS gave many more, prefer merged (covers boot race)
-    if (fromSdk.length < 20 && merged.length > fromSdk.length * 2) return merged;
     return merged;
   }
 
