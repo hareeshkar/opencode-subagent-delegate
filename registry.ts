@@ -6,20 +6,12 @@
  */
 
 import type { createOpencodeClient } from "@opencode-ai/sdk";
+import { isFreeModel, type ModelEntry } from "./listing.js";
 
-// Thin shape we expose — intentionally no `cost`.
-export type ModelEntry = {
-  providerID: string;
-  modelID: string;
-  /** qualified "provider/model" identity */
-  qualified: string;
-  name: string;
-  family?: string;
-  context?: number;
-  releaseDate?: string;
-  // we keep raw for debug but do not surface to LLM
-  _raw?: unknown;
-};
+// The entry shape and the discover_models renderers live in the shared,
+// dependency-free listing.ts so V1 and V2 output cannot drift.
+// Intentionally no `cost` is surfaced — only a boolean `free`.
+export type { ModelEntry };
 
 type RegistryDeps = {
   client: ReturnType<typeof createOpencodeClient>;
@@ -132,6 +124,7 @@ export class Registry {
           family: (m as { family?: string }).family,
           context: (m as { limit?: { context?: number } }).limit?.context,
           releaseDate: (m as { release_date?: string }).release_date,
+          free: isFreeModel(modelID, (m as { name?: string }).name ?? modelID, (m as { cost?: unknown }).cost),
           _raw: m,
         });
       }
@@ -174,6 +167,7 @@ export class Registry {
             family: (m as { family?: string })?.family,
             context: (m as { limit?: { context?: number } })?.limit?.context,
             releaseDate: (m as { release_date?: string })?.release_date,
+            free: isFreeModel(modelID, (m as { name?: string })?.name ?? modelID, (m as { cost?: unknown })?.cost),
             _raw: m,
           });
         }
@@ -216,6 +210,7 @@ export class Registry {
             family: (m as { family?: string })?.family,
             context: (m as { limit?: { context?: number } })?.limit?.context,
             releaseDate: (m as { release_date?: string })?.release_date,
+            free: isFreeModel(modelID, (m as { name?: string })?.name ?? modelID, (m as { cost?: unknown })?.cost),
             _raw: m,
           });
         }
@@ -274,8 +269,8 @@ export class Registry {
    * Search with optional query. Caps to `limit` (default 20).
    * Returns sorted by relevance (exact → prefix → substring).
    */
-  search(query?: string, limit = 20): { models: ModelEntry[]; total: number } {
-    const all = this.entries;
+  search(query?: string, limit = 20, opts?: { freeOnly?: boolean }): { models: ModelEntry[]; total: number } {
+    const all = opts?.freeOnly ? this.entries.filter((e) => e.free) : this.entries;
     if (!query || !query.trim()) {
       return { models: all.slice(0, limit), total: all.length };
     }

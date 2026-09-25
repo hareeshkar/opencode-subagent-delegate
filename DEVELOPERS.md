@@ -77,17 +77,29 @@ The wrapper re-exports the dual entrypoint, so this works on both 1.x (≥ 1.18.
 
 ## Tools reference
 
-### `discover_models(query?)`
+### `discover_models(query?, free?)`
 
-Substring search over model `id`, `name`, and `family` (case-insensitive). Returns at most 20 matches with qualified ids, names, family, and context size — no prices.
+Substring search over model `id`, `name`, and `family` (case-insensitive). Returns at most 20 matches with qualified ids, names, family, and context size. No prices are ever shown.
 
 ```
-discover_models("gemini")
-→ Found 3 of 42 matching "gemini":
-  - google/gemini-2.5-flash — Gemini 2.5 Flash ctx:1048576
+discover_models("glm-5.3-flash")
+→ Found 5 of 5 matching "glm-5.3-flash":
+  - zai-coding-plan/glm-5.3-flash — GLM-5.3-Flash ctx:1000000 · free · also: llmgateway, opencode-go, opencode
+  - nvidia/z-ai/glm-5.3-flash — GLM-5.3-Flash ctx:1000000 · free
   ...
-Use delegate(model="provider/model", task="...") with one of the above qualified ids.
 ```
+
+`free: true` lists only free models, grouped by provider so rate-limit and reliability trade-offs stay visible:
+
+```
+discover_models(free=true)
+→ Free models — 138 across 8 providers:
+  - nvidia (99): z-ai/glm-5.3-flash, deepseek-ai/deepseek-v4-flash, …
+  - opencode (7): big-pickle, mimo-v2.6-flash-free, …
+  ...
+```
+
+Free detection is a **union**: (1) every reported cost tier is zero — catches Nvidia free tiers and plan-included models; (2) the id ends in `-free` or the name contains "free" — the fallback for providers that do not report cost data. Models with unknown cost and no free signal are excluded. Normal results annotate other providers carrying the same model (free siblings are marked); the free listing groups everything by provider.
 
 If a query returns zero results, the registry is force-refreshed once (picks up newly authenticated providers) before giving up.
 
@@ -135,7 +147,7 @@ On short-name misses, the registry is force-refreshed once before failing (handl
 The plugin injects a short hint into the agent loop's system prompt — identically on **both** paths: V1 via `experimental.chat.system.transform`, V2 via `ctx.session.hook("context")`. The hint never contains the model catalog; it exists so the model knows the tools exist and how to route:
 
 1. **No model requested** → call `task` without `model`; the subagent inherits the current session's model. The agent never routes to another model on its own. (V2 implements inheritance explicitly: the parent session's model is read via `session.get` and passed to `session.create`.)
-2. **A model class is requested** (free / cheap / fast / strong / local) → `discover_models` first, then route to a matching connected model (query `"free"` → prefer `*-free` ids).
+2. **A model class is requested** (free / cheap / fast / strong / local) → `discover_models` first; for free call `discover_models(free=true)` (zero-cost models per provider — Zen `*-free`, Nvidia, plan-included); prefer `*-free` (OpenCode Zen) for the most generous limits — Nvidia's free tier is rate-limited.
 3. **A specific model is named** → resolve it. If the same model exists on several providers (or the id is ambiguous), show the matches and **ask the user** which one to use — never choose a provider silently. Route to the user's choice; unknown ids are re-discovered first.
 4. Never guess from price; keep descriptions to 3–5 words.
 
@@ -200,6 +212,7 @@ index.ts  →  export default { id, setup: v2.setup, server: v1.ModelRouterPlugi
   - catalog via `ctx.model.list()` with filesystem fallback
   - child runs via `ctx.session.*` with progress reporting and a ceiling-guarded wait
 - **`v1.ts` + support modules** — V1 plugin API: one factory receiving `{ project, client, $, directory, worktree }`, returning hooks and tool definitions.
+- **`listing.ts`** — shared, dependency-free listing helpers: the `ModelEntry` shape, free detection (cost tiers + naming fallback), and the `discover_models` renderers. Both implementations use it, so V1 and V2 output cannot drift.
 
 | V1 component | Plugin API used | Role |
 |--------------|----------------|------|
@@ -290,12 +303,14 @@ Auth flows out; secrets never do: keys are read internally to *filter* the catal
 - ✅ Concurrent delegations both complete; the second request queues on the provider side and the tool reports progress instead of appearing hung
 - ✅ Abort signal wired to `session.interrupt` on the child
 - ✅ Routing policy verified live: no model → the child inherits the session model; `"free"` class → discovered and routed to a `*-free` model; named unique model → routed directly (including an Nvidia free-tier model); named multi-provider model (`glm-5.3-flash`, 5 providers) → the agent presents the matches and **asks the user** (no child session until a choice is made); follow-up choice → executed on the chosen provider
+- ✅ `discover_models(free=true)` lists zero-cost models grouped by provider (cost-based, incl. Nvidia + plan-included; naming fallback when cost is missing) and normal results annotate multi-provider models with free siblings marked
 
 ## Development
 
 ```bash
 npm install          # dev tooling: typescript, @opencode-ai/plugin 1.4.9, @opencode-ai/sdk 1.4.9
-npx tsc --noEmit     # typecheck (strict, no emit)
+npm test             # unit tests for the shared listing helpers (Node runs TS directly)
+npm run typecheck    # tsc --noEmit (strict, no emit)
 npm pack --dry-run   # inspect the publish tarball
 npm publish          # release (requires npm auth)
 ```
@@ -315,5 +330,7 @@ Notes:
 - `registry.ts` — merged catalog, TTL cache, scored search (V1).
 - `resolver.ts` — `provider/model` parsing, `preferredProviders`, explicit ambiguity (V1).
 - `execution.ts` — `SessionExecutionAdapter` + inline-rendering helpers (V1).
+- `listing.ts` — shared entry shape, free detection, and listing renderers (pure; used by V1 and V2).
+- `test/listing.test.ts` — unit tests for the shared helpers (`npm test`).
 - `tsconfig.json` — strict typecheck config.
 - `README.md` — user-facing overview. This file — engineering reference.

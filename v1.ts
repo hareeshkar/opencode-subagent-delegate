@@ -21,6 +21,7 @@
 import type { Plugin } from "@opencode-ai/plugin";
 import { tool } from "@opencode-ai/plugin";
 import { Registry } from "./registry.js";
+import { renderFreeResults, renderSearchResults } from "./listing.js";
 import { Resolver, formatAmbiguous, formatNotFound } from "./resolver.js";
 import { SessionExecutionAdapter, renderOutput } from "./execution.js";
 
@@ -42,7 +43,7 @@ const SYSTEM_HINT = [
   "- `discover_models(query?)` — exact ids when unsure (substring over id/name/family, ≤20 rows, no prices).",
   "Routing policy:",
   "- No model requested → call task WITHOUT `model`; the subagent inherits the current model. Never route to another model on your own.",
-  '- A model class is requested (free / cheap / fast / strong / local) → discover_models first, then route to a matching connected model (query "free" → prefer `*-free` ids).',
+  '- A model class is requested (free / cheap / fast / strong / local) → discover_models first; for free call discover_models(free=true) — zero-cost models per provider (Zen *-free, Nvidia, plan-included); prefer *-free for the most generous limits (Nvidia is rate-limited).',
   "- A specific model is named → resolve it; if the same model exists on several providers (or the id is ambiguous), show the matches and ask the USER which one to use — never choose a provider yourself. Route to their choice; on an unknown id, discover_models first.",
   "Pick models you know exist; never guess from price. Keep `description` to 3-5 words.",
 ].join("\n");
@@ -104,36 +105,32 @@ export const ModelRouterPlugin: Plugin = async (input, opts) => {
     tool: {
       discover_models: tool({
         description:
-          "Discover available models (on-demand). Use query to filter id/name/family (case-insensitive substring). Returns at most 20 matches without prices. Use after to call delegate() with qualified provider/model.",
+          "Discover available models (on-demand). Use query to filter id/name/family (case-insensitive substring); pass free=true to list zero-cost models grouped by provider (free tiers and plan-included models, not just *-free names). Results mark free models and other providers offering the same model. No prices are shown.",
         args: {
           query: tool.schema.string().optional().describe("optional substring filter over model id/name/family, e.g. 'gemini', 'claude', 'qwen'"),
+          free: tool.schema.boolean().optional().describe("list only free (zero-cost) models, grouped by provider"),
         },
         async execute(args, _ctx) {
           await registry.load();
+          const query = typeof args.query === "string" ? args.query.trim() : "";
+          const freeOnly = args.free === true;
+          const limit = freeOnly ? 500 : 20;
           // If query present but no results, force refresh once (new auth/provider may have appeared)
-          let res = registry.search(args.query);
-          if (args.query && res.total === 0) {
+          let res = registry.search(query || undefined, limit, { freeOnly });
+          if (query && res.total === 0) {
             await registry.load({ force: true });
-            res = registry.search(args.query);
+            res = registry.search(query, limit, { freeOnly });
           }
           if (res.models.length === 0) {
+            if (freeOnly) {
+              return `No free models found${query ? ` matching "${query}"` : ""}. Free detection uses provider cost data and \`-free\` ids; try again after connecting more providers.`;
+            }
             const allCount = registry.all().length;
-            return `No models matched query "${args.query ?? ""}". Catalog has ${allCount} models. Try a broader query, e.g. discover_models("gemini").`;
+            return `No models matched query "${query}". Catalog has ${allCount} models. Try a broader query, e.g. discover_models("gemini").`;
           }
-          // Tiny output: qualified + name + context — no prices
-          const lines = res.models
-            .map((m) => {
-              const ctx = m.context ? ` ctx:${m.context}` : "";
-              const fam = m.family ? ` family:${m.family}` : "";
-              return `- ${m.qualified} — ${m.name}${fam}${ctx}`;
-            })
-            .join("\n");
-          const header = `Found ${res.models.length} of ${res.total} matching "${args.query ?? "*"}":`;
-          const footer =
-            res.total > res.models.length ? `(showing top ${res.models.length} — refine query to narrow)` : "";
-          return [header, lines, footer, `Use delegate(model="provider/model", task="...") with one of the above qualified ids.`]
-            .filter(Boolean)
-            .join("\n");
+          return freeOnly
+            ? renderFreeResults(res.models, res.total, query)
+            : renderSearchResults(res.models, registry.all(), res.total, query);
         },
       }),
 

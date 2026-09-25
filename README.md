@@ -80,6 +80,9 @@ No. It only uses providers you've already connected to OpenCode, with your exist
 **Does it cost extra?**
 Only the calls you delegate. Free models stay free, and pricing never affects routing — you choose the model explicitly (or let the agent choose by name).
 
+**How do I use only free models?**
+Ask for one — say "use a free model". The agent calls `discover_models(free=true)`, which lists zero-cost models grouped by provider: OpenCode Zen `*-free`, Nvidia's free tier, and plan-included models from subscriptions like Z.AI and MiniMax. When a free model is available on several providers, all of them are listed so you can choose — rate limits differ.
+
 **Do I need to configure models?**
 No. If OpenCode can use a model, this plugin can delegate to it. `discover_models` is how the agent finds exact ids when it's unsure.
 
@@ -123,6 +126,9 @@ index.ts  →  export default { id, setup: v2.setup, server: v1.ModelRouterPlugi
 ```
 
 ## Changelog
+
+**1.5.0**
+- **Real free detection + provider-aware listing** — `discover_models(free=true)` lists zero-cost models grouped by provider: reported zero-cost tiers **and** a `*-free` id/name fallback for providers that don't report cost, so Nvidia's free tier and plan-included models (Z.AI, MiniMax) show up too. Results annotate models that exist on several providers, marking which of those are free. A shared, unit-tested pure helper (`listing.ts`) keeps V1 and V2 output identical.
 
 **1.4.0**
 - **Explicit routing policy** — no model requested → the subagent inherits the current model; a model *class* requested (free / cheap / fast / strong / local) → discovered first, then routed; a specific model named → routed only after resolution.
