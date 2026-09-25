@@ -35,17 +35,16 @@ type PluginOptions = {
 // User wants: "Hey, this tool is available... these tools are for this."
 const SYSTEM_HINT = [
   "## Subagent delegation — opencode-subagent-delegate",
-  "You can run subagents on ANY model from ANY connected provider; each run appears as a clickable inline Task pane.",
+  "Run subagents on any connected model; each run appears as a clickable inline Task pane. Use them when they add value (parallel work, isolation, second opinions); skip trivial single-step replies.",
   "Tools:",
-  '- `task(description, prompt, subagent_type?, model?, variant?)` — preferred. Omit `model` to inherit the current model; pass `model` (qualified `provider/model`; short name if unambiguous) and optional `variant` (reasoning effort: low|medium|high|max) to route elsewhere.',
-  "- `discover_models(query?)` — resolve exact ids when unsure (substring over id/name/family, ≤20 rows).",
-  "- `delegate(model, task, agent?, variant?)` — explicit equivalent.",
-  "Delegate proactively, based on the work at hand — no need to be asked:",
-  "- Bulk/cheap work (drafts, summaries, formatting, simple lookups) → a fast, cheap, or free model (e.g. *-flash, *-free tiers).",
-  "- Hard reasoning (review, planning, tricky debugging) → the strongest available model with variant \"high\".",
-  "- Independent parallel subtasks → several `task` calls in one block.",
-  "- Private/sensitive content → a local provider (ollama, lmstudio) when connected.",
-  "Skip delegation for trivial single-step replies. Pick models you know exist; discover_models first when unsure. Never guess providers from price. On model-not-found, re-discover and retry with the qualified id. Keep `description` to 3-5 words.",
+  "- `task(description, prompt, subagent_type?, model?, variant?)` — preferred; omit `model` to inherit this session's model.",
+  "- `delegate(model, task, agent?, variant?)` — explicit; a model is required.",
+  "- `discover_models(query?)` — exact ids when unsure (substring over id/name/family, ≤20 rows, no prices).",
+  "Routing policy:",
+  "- No model requested → call task WITHOUT `model`; the subagent inherits the current model. Never route to another model on your own.",
+  '- A model class is requested (free / cheap / fast / strong / local) → discover_models first, then route to a matching connected model (query "free" → prefer `*-free` ids).',
+  "- A specific model is named → resolve it; if the same model exists on several providers (or the id is ambiguous), show the matches and ask the USER which one to use — never choose a provider yourself. Route to their choice; on an unknown id, discover_models first.",
+  "Pick models you know exist; never guess from price. Keep `description` to 3-5 words.",
 ].join("\n");
 
 export const ModelRouterPlugin: Plugin = async (input, opts) => {

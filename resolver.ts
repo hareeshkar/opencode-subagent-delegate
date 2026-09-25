@@ -120,10 +120,9 @@ export class Resolver {
 export function formatAmbiguous(r: Ambiguous): string {
   const lines = r.matches.map((m) => `  - ${m.qualified}  (${m.name})`).join("\n");
   return [
-    `Ambiguous model "${r.input}" — ${r.matches.length} matches (showing top ${r.matches.length}):`,
+    `Multiple providers offer "${r.input}" — ${r.matches.length} matches:`,
     lines,
-    `Specify qualified provider/model, e.g. delegate(model="${r.matches[0].qualified}", task="...")`,
-    `Or set preferredProviders to make this short name deterministic.`,
+    `Show these matches to the user, ask which one to use, then retry with that exact qualified id.`,
   ].join("\n");
 }
 

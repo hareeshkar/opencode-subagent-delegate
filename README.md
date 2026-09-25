@@ -38,7 +38,7 @@ You:    click either card → the full subagent session opens
 
 ## Install (2 minutes)
 
-**OpenCode 2.x** — add to `~/.config/opencode/opencode.json` (or a project `opencode.json`):
+**OpenCode 2.x (V2)** — add to `~/.config/opencode/opencode.json` (or a project `opencode.json`):
 
 ```json
 {
@@ -83,6 +83,9 @@ Only the calls you delegate. Free models stay free, and pricing never affects ro
 **Do I need to configure models?**
 No. If OpenCode can use a model, this plugin can delegate to it. `discover_models` is how the agent finds exact ids when it's unsure.
 
+**What if a model exists on several providers?**
+Then the plugin doesn't choose for you — it shows the matches and asks which provider you want, then runs the subagent on your pick. A named model always resolves to one exact `provider/model` before anything runs.
+
 **Which OpenCode versions are supported?**
 2.x and 1.18.29+. On 1.18.0–1.18.28, pin `opencode-subagent-delegate@1.2.5` (V1-only build).
 
@@ -106,7 +109,7 @@ What's inside:
 - **Architecture** — the dual entrypoint (`setup()` / `server()`) and both implementations
 - **Execution internals** — V1 parented child sessions vs the V2 `create → prompt → wait → context` flow, progress reporting, ceiling, abort wiring
 - **Autodiscovery internals** — merged catalog sources and the filesystem fallback
-- **Verification log** — everything that was tested live on 1.18.32 and 2.0.15
+- **Verification log** — everything that was tested live on 1.18.32 and 2.0.15–2.0.16
 - **Development** — typecheck, packaging, release steps
 
 One package, two implementations, one default export:
@@ -120,6 +123,11 @@ index.ts  →  export default { id, setup: v2.setup, server: v1.ModelRouterPlugi
 ```
 
 ## Changelog
+
+**1.4.0**
+- **Explicit routing policy** — no model requested → the subagent inherits the current model; a model *class* requested (free / cheap / fast / strong / local) → discovered first, then routed; a specific model named → routed only after resolution.
+- **Ambiguous models ask you** — when the same model exists on several providers, the agent shows the matches and asks which provider to use instead of choosing silently.
+- V2 inherits the invoking session's model explicitly (`session.get` → `session.create`), never relying on runtime defaults.
 
 **1.3.0**
 - **OpenCode 2.x support — dual entrypoint.** One package serves both plugin APIs from a single default export: V2 calls `setup()`, V1 (≥ 1.18.29) calls `server()`. V2 delegation runs `session.create → prompt → wait → context`, tools register via `ctx.tool.transform`, the system hint via `ctx.session.hook("context")`, abort is wired to `session.interrupt`.

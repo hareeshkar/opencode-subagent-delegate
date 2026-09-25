@@ -43,17 +43,16 @@ function readOptions(ctx: any): PluginOptions {
 // Small system hint — no catalog inside; discovery happens through discover_models().
 const SYSTEM_HINT = [
   "## Subagent delegation — opencode-subagent-delegate",
-  "You can run subagents on ANY model from ANY connected provider; each run appears as a clickable inline Task pane.",
+  "Run subagents on any connected model; each run appears as a clickable inline Task pane. Use them when they add value (parallel work, isolation, second opinions); skip trivial single-step replies.",
   "Tools:",
-  '- `task(description, prompt, subagent_type?, model?, variant?)` — preferred. Omit `model` to inherit the current model; pass `model` (qualified `provider/model`; short name if unambiguous) and optional `variant` (reasoning effort: low|medium|high|max) to route elsewhere.',
-  "- `discover_models(query?)` — resolve exact ids when unsure (substring over id/name/family, ≤20 rows).",
-  "- `delegate(model, task, agent?, variant?)` — explicit equivalent.",
-  "Delegate proactively, based on the work at hand — no need to be asked:",
-  "- Bulk/cheap work (drafts, summaries, formatting, simple lookups) → a fast, cheap, or free model (e.g. *-flash, *-free tiers).",
-  '- Hard reasoning (review, planning, tricky debugging) → the strongest available model with variant "high".',
-  "- Independent parallel subtasks → several `task` calls in one block.",
-  "- Private/sensitive content → a local provider (ollama, lmstudio) when connected.",
-  "Skip delegation for trivial single-step replies. Pick models you know exist; discover_models first when unsure. Never guess providers from price. On model-not-found, re-discover and retry with the qualified id. Keep `description` to 3-5 words.",
+  "- `task(description, prompt, subagent_type?, model?, variant?)` — preferred; omit `model` to inherit this session's model.",
+  "- `delegate(model, task, agent?, variant?)` — explicit; a model is required.",
+  "- `discover_models(query?)` — exact ids when unsure (substring over id/name/family, ≤20 rows, no prices).",
+  "Routing policy:",
+  "- No model requested → call task WITHOUT `model`; the subagent inherits the current model. Never route to another model on your own.",
+  '- A model class is requested (free / cheap / fast / strong / local) → discover_models first, then route to a matching connected model (query "free" → prefer `*-free` ids).',
+  "- A specific model is named → resolve it; if the same model exists on several providers (or the id is ambiguous), show the matches and ask the USER which one to use — never choose a provider yourself. Route to their choice; on an unknown id, discover_models first.",
+  "Pick models you know exist; never guess from price. Keep `description` to 3-5 words.",
 ].join("\n")
 
 /* ----------------------------------------------------------------- registry */
@@ -381,10 +380,9 @@ class Resolver {
 function formatAmbiguous(r: Ambiguous): string {
   const lines = r.matches.map((m) => `  - ${m.qualified}  (${m.name})`).join("\n")
   return [
-    `Ambiguous model "${r.input}" — ${r.matches.length} matches (showing top ${r.matches.length}):`,
+    `Multiple providers offer "${r.input}" — ${r.matches.length} matches:`,
     lines,
-    `Specify qualified provider/model, e.g. delegate(model="${r.matches[0].qualified}", task="...")`,
-    `Or set preferredProviders to make this short name deterministic.`,
+    `Show these matches to the user, ask which one to use, then retry with that exact qualified id.`,
   ].join("\n")
 }
 
@@ -438,16 +436,34 @@ class SessionExecution {
     if (opts.agent) base.agent = opts.agent
     if (entry) {
       base.model = { providerID: entry.providerID, id: entry.modelID, ...(opts.variant ? { variant: opts.variant } : {}) }
-    } else if (opts.variant) {
-      // Inherit model but still apply the variant — attach it to the session default.
+    } else {
+      // No model requested → inherit the invoking session's model explicitly
+      // (do not rely on runtime defaults for a fresh child session).
       try {
-        const def: any = await this.ctx.model.default?.()
-        const info: any = def?.data ?? def
-        const providerID = info?.providerID
-        const modelID = info?.modelID ?? info?.id
-        if (providerID && modelID) base.model = { providerID, id: modelID, variant: opts.variant }
+        const parent: any = await this.ctx.session.get({ sessionID: run.sessionID })
+        const m: any = parent?.model
+        const providerID = m?.providerID
+        const modelID = m?.id ?? m?.modelID
+        if (providerID && modelID) {
+          base.model = { providerID, id: modelID, ...(m.variant ? { variant: m.variant } : {}) }
+        }
       } catch {
-        // default model unavailable — run without variant
+        // parent session unavailable — fall through to the runtime default
+      }
+      if (opts.variant) {
+        if (base.model) base.model.variant = opts.variant
+        else {
+          // Variant requested but no session model known — attach it to the default model.
+          try {
+            const def: any = await this.ctx.model.default?.()
+            const info: any = def?.data ?? def
+            const providerID = info?.providerID
+            const modelID = info?.modelID ?? info?.id
+            if (providerID && modelID) base.model = { providerID, id: modelID, variant: opts.variant }
+          } catch {
+            // default model unavailable — run without variant
+          }
+        }
       }
     }
 

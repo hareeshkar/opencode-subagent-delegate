@@ -18,9 +18,11 @@ Complete engineering reference. For the quick, user-facing overview see **[READM
 
 ## Compatibility
 
+Throughout this documentation, **V1** means OpenCode 1.x and **V2** means OpenCode 2.x.
+
 | OpenCode | Entry called | Status |
 |----------|--------------|--------|
-| 2.x (tested on 2.0.15) | `setup()` | ✅ tested live |
+| 2.x (2.0.15–2.0.16) | `setup()` | ✅ tested live |
 | 1.18.29 – 1.18.32 | `server()` | ✅ tested live (1.18.32) |
 | 1.18.0 – 1.18.28 | — | ❌ pin `opencode-subagent-delegate@1.2.5` |
 
@@ -28,7 +30,7 @@ Complete engineering reference. For the quick, user-facing overview see **[READM
 - V1 object entrypoints (a default export with a `server()` method) landed in OpenCode **1.18.29**. The dual entrypoint follows the official pattern from the V2 migration guide: *"A package can temporarily expose both implementations from one default export. V1 calls `server()` and V2 calls `setup()`."*
 - The dual shape was verified two ways:
   - **Source**: OpenCode v1.18.32 `plugin/shared.ts` → `readV1Plugin()` detects a default object with an `id`/`server`, requires `server` to be a function, and ignores extra keys such as `setup`.
-  - **Runtime**: loaded on v1.18.32 and v2.0.15 (both executed tools end-to-end).
+  - **Runtime**: loaded on v1.18.32 and v2.0.15–2.0.16 (both executed tools end-to-end).
 
 ### Execution surfaces
 
@@ -123,10 +125,21 @@ Resolution rules:
 | `"google/gemini-2.5-flash"` | Exact `provider/model` lookup — unambiguous |
 | `"openrouter/google/gemini-3.7"` | Provider `openrouter`, model id `google/gemini-3.7` |
 | `"gemini-3.7"` (1 match) | Resolves directly |
-| `"gemini-3.7"` (2+ matches) | Returns ambiguity list — retry with qualified id |
+| `"gemini-3.7"` (2+ matches) | Returns the match list; the agent shows it and asks the user which provider to use, then retries with their choice |
 | `"gemini-3.7"` (0 matches) | Error with a `discover_models` suggestion |
 
 On short-name misses, the registry is force-refreshed once before failing (handles fresh auth). Provider errors surface as readable envelopes: `ModelUnavailableError` suggests another provider for the same family; auth errors point at the credential store.
+
+## Routing policy (system hint)
+
+The plugin injects a short hint into the agent loop's system prompt — identically on **both** paths: V1 via `experimental.chat.system.transform`, V2 via `ctx.session.hook("context")`. The hint never contains the model catalog; it exists so the model knows the tools exist and how to route:
+
+1. **No model requested** → call `task` without `model`; the subagent inherits the current session's model. The agent never routes to another model on its own. (V2 implements inheritance explicitly: the parent session's model is read via `session.get` and passed to `session.create`.)
+2. **A model class is requested** (free / cheap / fast / strong / local) → `discover_models` first, then route to a matching connected model (query `"free"` → prefer `*-free` ids).
+3. **A specific model is named** → resolve it. If the same model exists on several providers (or the id is ambiguous), show the matches and **ask the user** which one to use — never choose a provider silently. Route to the user's choice; unknown ids are re-discovered first.
+4. Never guess from price; keep descriptions to 3–5 words.
+
+Set `hintInSystemPrompt: false` to disable the hint entirely.
 
 ## Configuration
 
@@ -268,7 +281,7 @@ Auth flows out; secrets never do: keys are read internally to *filter* the catal
 - ✅ `discover_models("mimo")` → 20 of 24 matches from the live v1 catalog
 - ✅ `delegate(model="opencode/mimo-v2.6-flash-free", task="Reply with exactly: PONG")` → `PONG`
 
-**V2 (OpenCode 2.0.15)** — live local drop-in of this repo:
+**V2 (OpenCode 2.0.15–2.0.16)** — live local drop-in of this repo:
 
 - ✅ Dual entrypoint loads (`{ id, setup, server }`) — V2 runs `setup()`, V1 object detection is ignored
 - ✅ Tools register through the V2 tool editor (`editor.add`) — `task`, `delegate`, `discover_models` all live
@@ -276,6 +289,7 @@ Auth flows out; secrets never do: keys are read internally to *filter* the catal
 - ✅ `delegate` and `task` run end-to-end: `session.create → prompt → wait → context`, child id returned in ToolResult `metadata`
 - ✅ Concurrent delegations both complete; the second request queues on the provider side and the tool reports progress instead of appearing hung
 - ✅ Abort signal wired to `session.interrupt` on the child
+- ✅ Routing policy verified live: no model → the child inherits the session model; `"free"` class → discovered and routed to a `*-free` model; named unique model → routed directly (including an Nvidia free-tier model); named multi-provider model (`glm-5.3-flash`, 5 providers) → the agent presents the matches and **asks the user** (no child session until a choice is made); follow-up choice → executed on the chosen provider
 
 ## Development
 
