@@ -11,7 +11,7 @@
 ```text
 You:    Draft the migration script, then get a strong model to review it.
 
-Agent:  task(model="opencode/mimo-v2.5-free", task="draft the migration script…")
+Agent:  task(model="opencode/mimo-v2.6-flash-free", task="draft the migration script…")
         → the draft appears inline as a clickable card
 
         delegate(model="anthropic/claude-sonnet-4-5", task="review this draft…", variant="high")
@@ -22,19 +22,21 @@ You:    click either card → the full subagent session opens
 
 |  |  |
 |---|---|
-| **Works on** | OpenCode 2.x · 1.18.29+ (one package, dual entrypoint) |
+| **Works on** | OpenCode **2.x** and **1.18.29+** (V1/V2 — one package, dual entrypoint) |
+| **Verified on** | 2.0.15, 2.0.16 and 1.18.32 — live runs, not just typechecks |
 | **Adds** | `task` (routing-aware override), `delegate`, `discover_models` |
 | **Model sources** | everything you've connected — `/connect` providers, custom gateways, Zen/Go, local Ollama / LM Studio |
-| **Context cost** | a few-line hint; the model catalog is fetched on demand, never injected |
+| **Context cost** | a few-line hint; the catalog is fetched on demand, never injected |
 | **Install** | one config line — no build step, no global install |
 
 ## Why people install it
 
 - **Any connected model, per call.** Draft with a free model, review with a frontier model, keep secrets on a local model — all in one conversation, each as its own subagent.
 - **Inline, clickable subagents.** Every delegation renders as a Task card in your current chat (the same renderer as OpenCode's built-in `task`), with navigation, duration, and tool count.
-- **No model lists to maintain.** The plugin discovers your catalog on demand. Connect a provider → it's delegable. Nothing to register, nothing to update.
-- **Honest execution.** A delegation is always `provider/model`. Ambiguous short names return a match list instead of guessing. Price never influences routing.
-- **Clean failures.** Provider 403s, model removals, and auth errors come back as readable messages the agent can retry from — no silent dead ends.
+- **Free models, found properly.** Ask for a free model and the agent lists every zero-cost option *grouped by provider* — Zen `*-free`, Nvidia's free tier, plan-included models from Z.AI/MiniMax, and free signals from your own `opencode.json` entries. Rate limits differ per provider, so you see the choices.
+- **No model lists to maintain.** Discovery is on demand. Connect a provider → it's delegable. Nothing to register, nothing to update.
+- **Honest execution.** A delegation is always `provider/model`. Ambiguous short names return a match list and the agent **asks you which provider to use** — it never picks silently.
+- **Clean failures.** Provider 403s, model removals, and auth errors come back as readable messages the agent can retry from.
 
 ## Install (2 minutes)
 
@@ -47,7 +49,7 @@ You:    click either card → the full subagent session opens
 }
 ```
 
-**OpenCode 1.x** — same idea, the key is `plugin`:
+**OpenCode 1.x (V1, 1.18.29+)** — same idea, the key is `plugin`:
 
 ```json
 {
@@ -64,11 +66,12 @@ Then **restart OpenCode**. OpenCode fetches the package itself — nothing to co
 
 You don't run anything yourself — you ask, and your agent picks the right tool:
 
-| Ask like this | Your agent uses |
+| Ask like this | What happens |
 |---|---|
 | *"Get a second opinion from Gemini on this diff."* | `delegate(model="google/gemini-…", …)` |
 | *"Draft this with a cheap model, then have a strong model review it."* | `task(…)` with a routed `model` |
-| *"Which Kimi models do I have across providers?"* | `discover_models("kimi")` |
+| *"Use any free model to summarize this."* | `discover_models(free=true)` → routed to a zero-cost model |
+| *"Which Kimi models do I have?"* | `discover_models("kimi")` — with provider annotations |
 
 Everything shows up as a clickable card in the chat — open it to see the subagent's full session, or just read the result inline.
 
@@ -83,11 +86,11 @@ Only the calls you delegate. Free models stay free, and pricing never affects ro
 **How do I use only free models?**
 Ask for one — say "use a free model". The agent calls `discover_models(free=true)`, which lists zero-cost models grouped by provider: OpenCode Zen `*-free`, Nvidia's free tier, and plan-included models from subscriptions like Z.AI and MiniMax. Free status is computed from the runtime's cost data **and** your `opencode.json` entries together, so custom providers are covered too. When a free model is available on several providers, all of them are listed so you can choose — rate limits differ.
 
-**Do I need to configure models?**
-No. If OpenCode can use a model, this plugin can delegate to it. `discover_models` is how the agent finds exact ids when it's unsure.
-
 **What if a model exists on several providers?**
 Then the plugin doesn't choose for you — it shows the matches and asks which provider you want, then runs the subagent on your pick. A named model always resolves to one exact `provider/model` before anything runs.
+
+**Do I need to configure models?**
+No. If OpenCode can use a model, this plugin can delegate to it. `discover_models` is how the agent finds exact ids when it's unsure.
 
 **Which OpenCode versions are supported?**
 2.x and 1.18.29+. On 1.18.0–1.18.28, pin `opencode-subagent-delegate@1.2.5` (V1-only build).
@@ -96,34 +99,55 @@ Then the plugin doesn't choose for you — it shows the matches and asks which p
 No. Free/throttled providers typically allow one request at a time; a second concurrent delegation queues (observed 3–150 s) and then runs. The tool shows progress while waiting and gives up cleanly after 30 minutes.
 
 **Where do my credentials live?**
-In OpenCode's own credential store. The plugin reads them to know which models are usable, and never returns keys to the model or logs.
+In OpenCode's own credential store. The plugin reads provider/model metadata to know what's usable, and never returns keys to the model or logs.
 
 ---
 
 ## For developers
 
-**→ Full engineering documentation: [DEVELOPERS.md](DEVELOPERS.md)**
+**→ Full engineering documentation: [DEVELOPERS.md](DEVELOPERS.md)** — versions, evidence, test recipes, and internals.
 
-What's inside:
+### Architecture
 
-- **Compatibility matrix** — exact entrypoints called on 1.18.29+/2.x, `engines` guard, why older 1.x needs `1.2.5`
-- **Tools reference** — argument tables, resolution rules, ambiguity handling, error envelopes
-- **Configuration** — `preferredProviders`, `registryTtlMs`, `hintInSystemPrompt` (V1 tuple + V2 object form)
-- **Architecture** — the dual entrypoint (`setup()` / `server()`) and both implementations
-- **Execution internals** — V1 parented child sessions vs the V2 `create → prompt → wait → context` flow, progress reporting, ceiling, abort wiring
-- **Autodiscovery internals** — merged catalog sources and the filesystem fallback
-- **Verification log** — everything that was tested live on 1.18.32 and 2.0.15–2.0.16
-- **Development** — typecheck, packaging, release steps
-
-One package, two implementations, one default export:
+One package, two implementations, one shared pure core:
 
 ```text
-index.ts  →  export default { id, setup: v2.setup, server: v1.ModelRouterPlugin }
-                │                                  │
-                │ V2 (2.x)                         │ V1 (≥ 1.18.29)
-                ▼                                  ▼
-             v2.ts                    v1.ts  (+ registry.ts / resolver.ts / execution.ts)
+index.ts  →  export default { id, setup, server }
+                │                              │
+                │ V2 (2.x)                     │ V1 (≥ 1.18.29)
+                ▼                              ▼
+             v2.ts               v1.ts (+ registry.ts / resolver.ts / execution.ts)
+                │                              │
+                └────────────┬─────────────────┘
+                             ▼
+              listing.ts  ·  config-models.ts
+        (pure: entry shape, free detection, renderers, config merge)
 ```
+
+- **`v2.ts`** — V2 API: tools via `ctx.tool.transform(editor.add)`, routing hint via `ctx.session.hook("context")`, catalog via `ctx.model.list()`, child runs via `ctx.session.*` with progress reporting and a hardened wait (wait race + idle polling + 30-min ceiling).
+- **`v1.ts` + modules** — V1 API: one factory returning hooks and `tool()`-based definitions; parented child sessions; live metadata PATCH for the TUI.
+- **`listing.ts` / `config-models.ts`** — the shared, unit-tested core. V1 and V2 render byte-identical output because both call these; runtime surfaces stay separate because the two plugin APIs genuinely differ.
+
+### Design principles (the parts senior engineers check first)
+
+1. **No prices, ever.** Cost data is reduced to a boolean `free` before it can reach a model. Pricing never influences routing.
+2. **Explicit identity.** Execution is always `(providerID, modelID)`. Ambiguity returns facts, not guesses.
+3. **The catalog never enters context.** The hint is a fixed string; discovery is a tool call.
+4. **Dual entrypoint, single behaviour.** The documented migration pattern (`setup()` / `server()`), with shared pure logic so the two runtimes cannot drift.
+5. **Bound everything.** ≤20 search rows, ≤6 free ids/provider, 30-minute child ceiling, progress ticks while waiting.
+
+### What's in DEVELOPERS.md
+
+- Compatibility matrix with the exact entrypoints called on 1.18.29+/2.x, `engines` guard, and why older 1.x pins `1.2.5`
+- Tools reference: arguments, resolution algorithm, output conventions, error envelopes
+- **Free detection in depth**: signal sources (runtime cost tiers, naming, `opencode.json`), the union formula, the exact same-provider matching rule, and the fallback boundary
+- Routing policy: the injected hint text and both injection hooks
+- Execution internals: V1 parented sessions vs the V2 `create → prompt → wait → context` flow, the measured wait behavior, abort wiring
+- Registry/resolver internals, configuration reference, security model
+- Testing: 26 unit checks + the live verification matrix, with reproduction recipes (including the V1 isolated-HOME recipe and its pitfalls)
+- Troubleshooting: log lines, failure meanings, and known runtime differences
+
+---
 
 ## Changelog
 
@@ -132,7 +156,7 @@ index.ts  →  export default { id, setup: v2.setup, server: v1.ModelRouterPlugi
 - Shared `config-models.ts` reader/merge (unit-tested) used by V1 and V2; `npm test` now runs 26 checks.
 
 **1.5.0**
-- **Real free detection + provider-aware listing** — `discover_models(free=true)` lists zero-cost models grouped by provider: reported zero-cost tiers **and** a `*-free` id/name fallback for providers that don't report cost, so Nvidia's free tier and plan-included models (Z.AI, MiniMax) show up too. Results annotate models that exist on several providers, marking which of those are free. A shared, unit-tested pure helper (`listing.ts`) keeps V1 and V2 output identical.
+- **Real free detection + provider-aware listing** — `discover_models(free=true)` lists zero-cost models grouped by provider: reported zero-cost tiers **and** a `*-free` id/name fallback, so Nvidia's free tier and plan-included models (Z.AI, MiniMax) show up too. Results annotate models that exist on several providers, marking which of those are free. A shared, unit-tested pure helper (`listing.ts`) keeps V1 and V2 output identical.
 
 **1.4.0**
 - **Explicit routing policy** — no model requested → the subagent inherits the current model; a model *class* requested (free / cheap / fast / strong / local) → discovered first, then routed; a specific model named → routed only after resolution.
